@@ -1,0 +1,1 @@
+{% extends "base.html" %}{% block content %}<h1>Repair Policy Library</h1><div class="terms-grid">{% for name,items in terms.items() %}<div class="panel"><h2>{{name}}</h2><ul>{% for x in items %}<li>{{x}}</li>{% endfor %}</ul></div>{% endfor %}</div>{% endblock %}
