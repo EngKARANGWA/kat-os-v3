@@ -12,7 +12,10 @@ import os
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("KAT_SECRET_KEY", "CHANGE-ME-IN-PRODUCTION")
-app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///kat_os.db")
+database_url = os.getenv("DATABASE_URL", "sqlite:///kat_os.db")
+if database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db = SQLAlchemy(app)
 
@@ -111,7 +114,7 @@ def send_real_notification_if_configured(n):
 
 @app.context_processor
 def inject():
-    return dict(me=current_user(),total_paid=total_paid,today=date.today())
+    return dict(me=current_user(),total_paid=total_paid,today=date.today(),initial_username=os.getenv("KAT_ADMIN_USERNAME", "christian"))
 
 @app.route("/login",methods=["GET","POST"])
 def login():
@@ -308,7 +311,10 @@ def seed():
     if not Branch.query.first(): db.session.add(Branch(name="Kigali Apple Tech - Main",location="Kigali, Rwanda",phone="0788 882 114"))
     db.session.commit()
     if not User.query.first():
-        db.session.add(User(full_name="Christian DUSHIMIMANA",username="christian",password_hash=generate_password_hash("ChangeMe123!"),role="General Manager",work_email="christian@kat.com",branch_id=Branch.query.first().id)); db.session.commit()
+        username=os.getenv("KAT_ADMIN_USERNAME", "christian").strip()
+        password=os.getenv("KAT_ADMIN_PASSWORD", "ChangeMe123!")
+        full_name=os.getenv("KAT_ADMIN_NAME", "Christian DUSHIMIMANA").strip()
+        db.session.add(User(full_name=full_name,username=username,password_hash=generate_password_hash(password),role="General Manager",work_email="christian@kat.com",branch_id=Branch.query.first().id)); db.session.commit()
 
 with app.app_context():
     db.create_all(); seed()
