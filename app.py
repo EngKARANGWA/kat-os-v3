@@ -156,7 +156,7 @@ def send_real_notification_if_configured(n):
 
 @app.context_processor
 def inject():
-    return dict(me=current_user(),total_paid=total_paid,today=date.today(),initial_username=os.getenv("KAT_ADMIN_USERNAME", "christian"))
+    return dict(me=current_user(),total_paid=total_paid,today=date.today())
 
 @app.route("/login",methods=["GET","POST"])
 def login():
@@ -168,6 +168,10 @@ def login():
     return render_template("login.html")
 @app.route("/logout")
 def logout(): session.clear(); return redirect(url_for("login"))
+@app.route("/healthz")
+def healthz():
+    db.session.execute(db.text("select 1"))
+    return {"status":"ok","database":db.engine.dialect.name}
 
 @app.route("/")
 @login_required
