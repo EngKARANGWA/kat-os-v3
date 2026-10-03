@@ -29,5 +29,9 @@ Initial fresh-database login: `christian` / `ChangeMe123!`. Set `KAT_ADMIN_USERN
 
 For Vercel, configure `DATABASE_URL` to a persistent PostgreSQL database (for example Neon, Supabase, or Vercel Postgres). Do not use the default SQLite database in production because Vercel's filesystem is temporary.
 
+## Using SQLite and Neon
+
+The app uses one database per process. To use the local SQLite database, set `KAT_DATABASE_URL=sqlite:///kat_os.db` before starting the app. To use Neon, remove `KAT_DATABASE_URL` and leave the Neon `DATABASE_URL` in `.env.local` or set `DATABASE_URL` in Vercel. The two databases are separate and are not synchronized automatically.
+
 ## Database note
 This build adds tables/columns compared with v2. For an existing production database, use a proper migration before deploying. For a clean test, start with a fresh SQLite database.

@@ -8,16 +8,23 @@ from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
-import os
+from dotenv import load_dotenv
+from markupsafe import escape
+import os, json, urllib.request, urllib.error
 
+load_dotenv(".env.local")
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("KAT_SECRET_KEY", "CHANGE-ME-IN-PRODUCTION")
-database_url = os.getenv("DATABASE_URL", "sqlite:///kat_os.db")
+database_url = os.getenv("KAT_DATABASE_URL", os.getenv("DATABASE_URL", "sqlite:///kat_os.db"))
 if database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db = SQLAlchemy(app)
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+EMAIL_FROM = os.getenv("KAT_EMAIL_FROM", "Kigali Apple Tech <notifications@kigaliappletech.com>")
+EMAIL_REPLY_TO = os.getenv("KAT_EMAIL_REPLY_TO", "")
+SHOP_PHONE = "0788 882 114"
 
 STATUSES = ["Received","Diagnosing","Waiting for Approval","Repairing","Ready","Collected","Cancelled"]
 ROLES = ["General Manager","Receptionist","Technician"]
@@ -104,13 +111,48 @@ def next_ticket():
     last=Repair.query.order_by(Repair.id.desc()).first()
     return ticket_from_number((last.id if last else 0)+1)
 def total_paid(r): return sum(p.amount for p in r.payments)
+def status_email_text(r):
+    balance=max(0,r.quoted_price-total_paid(r))
+    lines={
+        "Received":f"We have received your {r.device} for repair. Your ticket number is {r.ticket_code}. We will keep you updated as the repair progresses.",
+        "Diagnosing":f"Our technicians are now diagnosing your {r.device} (ticket {r.ticket_code}).",
+        "Waiting for Approval":f"We have finished diagnosing your {r.device} (ticket {r.ticket_code}). The quoted price is {r.quoted_price:,} RWF. Please contact us to approve the repair.",
+        "Repairing":f"Your {r.device} (ticket {r.ticket_code}) is now being repaired.",
+        "Ready":f"Good news! Your {r.device} (ticket {r.ticket_code}) is ready for pickup."+(f" Balance to pay: {balance:,} RWF." if balance else ""),
+        "Collected":f"Thank you for choosing Kigali Apple Tech. Your {r.device} (ticket {r.ticket_code}) has been collected."+(f" Your warranty is valid until {r.warranty_until.strftime('%d %b %Y')}." if r.warranty_until else ""),
+        "Cancelled":f"The repair of your {r.device} (ticket {r.ticket_code}) has been cancelled. Please contact us if you have any questions.",
+    }
+    return f"Hello {r.client.full_name},\n\n{lines.get(r.status, f'Your {r.device} (ticket {r.ticket_code}) status is now {r.status}.')}\n\nKigali Apple Tech • Kigali, Rwanda • {SHOP_PHONE}"
+def email_html(text):
+    body="".join(f'<p style="margin:0 0 14px">{escape(p).replace(chr(10),"<br>")}</p>' for p in text.split("\n\n"))
+    return f'<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#222;font-size:15px;line-height:1.5"><div style="background:#0b7fab;color:#fff;padding:14px 20px;font-size:18px;font-weight:bold;border-radius:8px 8px 0 0">Kigali Apple Tech</div><div style="border:1px solid #e3e3e3;border-top:0;padding:20px;border-radius:0 0 8px 8px">{body}</div></div>'
+def send_email(to,subject,text):
+    if not RESEND_API_KEY: return False,"Email is not configured (RESEND_API_KEY missing)."
+    payload={"from":EMAIL_FROM,"to":[to],"subject":subject,"html":email_html(text),"text":text}
+    if EMAIL_REPLY_TO: payload["reply_to"]=EMAIL_REPLY_TO
+    req=urllib.request.Request("https://api.resend.com/emails",data=json.dumps(payload).encode(),method="POST",headers={"Authorization":f"Bearer {RESEND_API_KEY}","Content-Type":"application/json","User-Agent":"kat-os/1.0"})
+    try:
+        with urllib.request.urlopen(req,timeout=10) as resp: return True,json.loads(resp.read() or b"{}").get("id","")
+    except urllib.error.HTTPError as e:
+        raw=e.read().decode(errors="replace")
+        try: detail=json.loads(raw).get("message",raw)
+        except ValueError: detail=raw
+        return False,f"Email provider error {e.code}: {detail[:200]}"
+    except Exception as e: return False,f"Email sending failed: {str(e)[:200]}"
 def queue_status_notification(r):
     msg=f"Kigali Apple Tech: {r.ticket_code} ({r.device}) status is now {r.status}."
     db.session.add(Notification(repair_id=r.id,channel="SMS/WhatsApp",recipient=r.client.phone,message=msg,status="Queued"))
+    if r.client.email:
+        n=Notification(repair_id=r.id,channel="Email",recipient=r.client.email,message=status_email_text(r),status="Queued"); db.session.add(n)
+        send_real_notification_if_configured(n)
 def send_real_notification_if_configured(n):
-    # Production hook: connect Twilio/Meta WhatsApp/email provider here using environment credentials.
-    # Until credentials are configured, notifications remain safely queued and visible in KAT OS.
-    return False
+    # Email is sent through Resend. SMS/WhatsApp stay queued until a provider is connected.
+    if n.channel!="Email": return False,"Only email delivery is connected."
+    if not RESEND_API_KEY: return False,"Email is not configured (RESEND_API_KEY missing)."
+    r=Repair.query.get(n.repair_id) if n.repair_id else None
+    ok,info=send_email(n.recipient,f"Update on your repair {r.ticket_code}" if r else "Kigali Apple Tech",n.message)
+    n.status="Sent" if ok else "Failed"
+    return ok,info
 
 @app.context_processor
 def inject():
@@ -286,7 +328,19 @@ def services():
 def terms_library(): return render_template("terms.html",terms=TERMS)
 @app.route("/notifications")
 @login_required
-def notifications(): return render_template("notifications.html",notifications=Notification.query.order_by(Notification.created_at.desc()).limit(200).all())
+def notifications(): return render_template("notifications.html",notifications=Notification.query.order_by(Notification.created_at.desc()).limit(200).all(),email_ready=bool(RESEND_API_KEY),email_from=EMAIL_FROM)
+@app.route("/notifications/<int:notification_id>/send",methods=["POST"])
+@login_required
+def resend_notification(notification_id):
+    n=Notification.query.get_or_404(notification_id); ok,info=send_real_notification_if_configured(n)
+    audit(f"Resent {n.channel} notification ({n.status})","Notification",n.id); db.session.commit()
+    flash("Email sent." if ok else info,"success" if ok else "error"); return redirect(url_for("notifications"))
+@app.route("/notifications/test",methods=["POST"])
+@admin_required
+def test_email():
+    to=request.form.get("to","").strip()
+    ok,info=send_email(to,"KAT OS test email",f"Hello,\n\nThis is a test email from KAT OS. If you can read this, email notifications are working.\n\nKigali Apple Tech • Kigali, Rwanda • {SHOP_PHONE}")
+    flash(f"Test email sent to {to}." if ok else info,"success" if ok else "error"); return redirect(url_for("notifications"))
 @app.route("/reports")
 @login_required
 def reports():
