@@ -1,0 +1,44 @@
+# KAT OS: Next.js (web) + Python/Flask (api) + Caddy (free automatic HTTPS).
+# Start:  docker compose up -d --build
+# Add "--profile localdb" to also run PostgreSQL on this server instead of Neon.
+services:
+  api:
+    build: ./api
+    restart: unless-stopped
+    env_file: .env
+
+  web:
+    build:
+      context: ./web
+      args:
+        API_URL: http://api:5000
+    restart: unless-stopped
+    depends_on: [api]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      KAT_DOMAIN: ${KAT_DOMAIN:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [web]
+
+  db:
+    image: postgres:16-alpine
+    profiles: [localdb]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kat
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kat}
+      POSTGRES_DB: kat_os
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pgdata:

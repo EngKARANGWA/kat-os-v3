@@ -1,0 +1,6 @@
+# KAT_DOMAIN comes from .env. With a real domain (e.g. katos.duckdns.org) Caddy gets a free
+# Let's Encrypt HTTPS certificate automatically. With ":80" it serves plain HTTP (shop network only).
+{$KAT_DOMAIN} {
+	encode gzip
+	reverse_proxy web:3000
+}
