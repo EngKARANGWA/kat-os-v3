@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useId, useRef, useState } from "react";
-import { ScanLine } from "lucide-react";
+import { ScanLine, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,8 +13,10 @@ type Props = {
   required?: boolean;
   autoFocus?: boolean;
   placeholder?: string;
-  hint?: string;
+  hint?: React.ReactNode;
   defaultValue?: string;
+  /** Pass to control the field from the page (e.g. fill it when a device is picked); leave out otherwise. */
+  value?: string;
   /** Called whenever the code changes (typed, scanned with a USB scanner, or read by the camera). */
   onCodeChange?: (code: string) => void;
 };
@@ -24,7 +26,7 @@ type Props = {
  * typing, a USB/Bluetooth barcode scanner (it types the code and presses Enter), or the camera button.
  * Enter moves to the next field instead of submitting the half-filled form.
  */
-export function ScanField({ label, name, required, autoFocus, placeholder, hint, defaultValue, onCodeChange }: Props) {
+export function ScanField({ label, name, required, autoFocus, placeholder, hint, defaultValue, value, onCodeChange }: Props) {
   const id = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [scanning, setScanning] = useState(false);
@@ -40,10 +42,10 @@ export function ScanField({ label, name, required, autoFocus, placeholder, hint,
   const onDetected = useCallback(
     (code: string) => {
       detected.current = true;
-      if (inputRef.current) inputRef.current.value = code;
+      if (inputRef.current && value === undefined) inputRef.current.value = code;
       onCodeChange?.(code);
     },
-    [onCodeChange],
+    [onCodeChange, value],
   );
   const onScannerOpenChange = useCallback((open: boolean) => {
     setScanning(open);
@@ -56,16 +58,18 @@ export function ScanField({ label, name, required, autoFocus, placeholder, hint,
     <div className="flex flex-col gap-2">
       <Label htmlFor={id}>{label}</Label>
       <div className="flex gap-2">
+        <div className="relative flex-1">
+        <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           ref={inputRef}
           id={id}
           name={name}
           required={required}
           autoFocus={autoFocus}
-          defaultValue={defaultValue}
+          {...(value !== undefined ? { value } : { defaultValue })}
           autoComplete="off"
           placeholder={placeholder}
-          className="h-10 font-mono"
+          className="h-10 pl-9 font-mono"
           onChange={(e) => onCodeChange?.(e.target.value.trim())}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -74,12 +78,13 @@ export function ScanField({ label, name, required, autoFocus, placeholder, hint,
             }
           }}
         />
+        </div>
         <Button type="button" variant="outline" className="h-10" onClick={() => onScannerOpenChange(true)} aria-label={`Scan ${label} with camera`}>
           <ScanLine />
           <span className="hidden sm:inline">Scan</span>
         </Button>
       </div>
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
       <BarcodeScanner open={scanning} onOpenChange={onScannerOpenChange} onDetected={onDetected} onClosed={onScannerClosed} />
     </div>
   );

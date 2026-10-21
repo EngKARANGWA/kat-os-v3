@@ -5,6 +5,7 @@ import { Suspense, useState } from "react";
 import { Phone, User } from "lucide-react";
 import { ApiForm, Async, Field, Loading, PageHeader, Panel, SelectField, SubmitButton, TextAreaField } from "@/components/kat";
 import { ClientPicker, type ClientOption } from "@/components/repairs/ClientPicker";
+import { DeviceFields } from "@/components/repairs/DeviceFields";
 import { useFlash } from "@/components/Flash";
 import { Button } from "@/components/ui/button";
 import { api, useApi } from "@/lib/api";
@@ -75,8 +76,7 @@ function NewRepair() {
               }}
             >
               <SelectField label="Branch" name="branch_id" options={d.branches.map((b) => ({ value: b.id, label: b.name }))} />
-              <Field label="Device" name="device" placeholder="iPhone 15 Pro Max" required autoFocus />
-              <Field label="IMEI / Serial" name="serial_imei" />
+              <DeviceFields clientId={client.id} />
               <Field label="Device passcode (optional)" name="device_passcode" />
               <Field label="Accessories received" name="accessories" placeholder="Case, SIM, charger..." />
               <SelectField label="Problem category" name="problem_category" options={Object.keys(d.terms)} hint="The matching T&Cs are attached to the ticket." />
