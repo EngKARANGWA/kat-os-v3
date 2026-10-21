@@ -52,20 +52,20 @@ The brand colours are the CSS variables at the top of `app/globals.css`.
 
 Requirements: Python 3.12 and Node.js 20 or newer.
 
-**1. API** (terminal 1, from the project folder)
+From the project folder, once:
 ```
 python -m venv .venv
-.venv\Scripts\activate          (macOS/Linux: source .venv/bin/activate)
+.venv\Scriptsctivate          (macOS/Linux: source .venv/bin/activate)
 pip install -r requirements.txt
-python api/app.py
-```
-The API runs on http://127.0.0.1:5000.
-
-**2. Website** (terminal 2, also from the project folder)
-```
 npm install
+```
+Then, every time:
+```
 npm run dev
 ```
+This starts both the Python API (http://127.0.0.1:5000) and the website. Ctrl+C stops both.
+(`npm run dev:web` starts only the website, `python api/app.py` only the API.)
+
 Open **http://localhost:3000**.
 
 ### Which database is used
