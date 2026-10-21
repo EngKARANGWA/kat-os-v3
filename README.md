@@ -55,7 +55,7 @@ Requirements: Python 3.12 and Node.js 20 or newer.
 From the project folder, once:
 ```
 python -m venv .venv
-.venv\Scriptsctivate          (macOS/Linux: source .venv/bin/activate)
+.venv\Scripts\activate          (macOS/Linux: source .venv/bin/activate)
 pip install -r requirements.txt
 npm install
 ```
