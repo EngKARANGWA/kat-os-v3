@@ -1,11 +1,28 @@
-.neon
+# secrets and local settings (.env.example is a template and is committed)
 .env
-.env.local
-node_modules/
-.next/
+.env.*
+!.env.example
+.neon
+.vercel
+
+# Python
 .venv/
 __pycache__/
 *.pyc
-.vscode/
 instance/
-.env.local.*
+
+# Next.js / Node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*
+
+# editor / OS
+.vscode/
+.DS_Store
+*.pem
+
+.vercel
+.env*

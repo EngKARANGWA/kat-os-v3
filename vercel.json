@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/app" },
+    { "source": "/healthz", "destination": "/api/app" }
+  ],
+  "functions": {
+    "api/app.py": {
+      "maxDuration": 30,
+      "excludeFiles": "{.next,node_modules,app,components,lib,public,instance,.venv}/**"
+    }
+  }
+}

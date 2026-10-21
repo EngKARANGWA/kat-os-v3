@@ -1,15 +1,17 @@
-# KAT OS: Next.js (web) + Python/Flask (api) + Caddy (free automatic HTTPS).
+# KAT OS: Next.js website (repository root) + Python/Flask API (api/) + Caddy (free automatic HTTPS).
 # Start:  docker compose up -d --build
 # Add "--profile localdb" to also run PostgreSQL on this server instead of Neon.
 services:
   api:
-    build: ./api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     restart: unless-stopped
     env_file: .env
 
   web:
     build:
-      context: ./web
+      context: .
       args:
         API_URL: http://api:5000
     restart: unless-stopped

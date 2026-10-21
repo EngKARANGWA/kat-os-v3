@@ -1,0 +1,14 @@
+# Never upload local secrets, local databases or build output (Vercel builds from source).
+.env
+.env.*
+!.env.example
+.neon
+.venv
+instance
+__pycache__
+*.pyc
+node_modules
+.next
+out
+*.tsbuildinfo
+.vscode

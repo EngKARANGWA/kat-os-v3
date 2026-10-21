@@ -2,11 +2,12 @@
 
 Kigali Apple Tech repair and operations system.
 
-- **`web/`**: Next.js (React) frontend that staff use in the browser.
-- **`api/`**: Python (Flask) JSON API with all business logic, the database models and PDF documents.
+- **Project root** (`app/`, `components/`, `lib/`, `package.json`): the Next.js (React) website that staff use in the browser.
+- **`api/`**: Python (Flask) JSON API with all business logic, the database models and PDF documents (`api/app.py`, packages in `requirements.txt`).
 - The database tables are the same as in the previous Flask version, so an existing SQLite or Neon database keeps working without a migration.
 
-The browser only talks to Next.js. Next.js forwards every `/api/*` request to Flask, so there is one address and one login cookie.
+The browser only talks to one address. `/api/*` goes to the Python API, everything else to Next.js, so there is one login cookie.
+On Vercel this split is done by `vercel.json` (the API runs as a Python function); locally and in Docker, Next.js forwards `/api/*` to the Flask server.
 
 ## Features
 - Separate General Manager, Receptionist and Technician roles.
@@ -26,15 +27,15 @@ The browser only talks to Next.js. Next.js forwards every `/api/*` request to Fl
 
 ## How the web app is built (components)
 
-The interface uses **[shadcn/ui](https://ui.shadcn.com)** (free, MIT licence), which is built on Radix UI and Tailwind CSS, with **Lucide** icons. It is styled in the Kigali Apple Tech colours. Pages in `web/app/` are put together from components instead of raw HTML:
+The interface uses **[shadcn/ui](https://ui.shadcn.com)** (free, MIT licence), which is built on Radix UI and Tailwind CSS, with **Lucide** icons. It is styled in the Kigali Apple Tech colours. Pages in `app/` are put together from components instead of raw HTML:
 
 | Folder | Components |
 |---|---|
-| `web/components/ui/` | shadcn/ui base components (button, card, table, input, native-select, badge, sheet, dropdown-menu, sonner…). Add more with `npx shadcn@latest add <name>`. |
-| `web/components/kat/` | KAT building blocks on top of shadcn/ui: `Button`, `LinkButton`, `Panel`, `PageHeader`, `TwoColumns`, `Detail`, `StatGrid`/`StatCard`, `DataTable`, `StatusBadge` (coloured by status), `Alert`, `Loading`, `Async`, `SearchBox`, and form parts: `ApiForm`, `SubmitButton`, `Field`, `TextAreaField`, `Select`, `SelectField`, `CheckboxField`. Import them from `@/components/kat`. |
-| `web/components/layout/` | `Sidebar`, `TopBar` (account menu, slide-out menu on phones). The menu items are in `nav.ts`. |
-| `web/components/repairs/` | `RepairInfo`, `RepairUpdateForm`, `PartsPanel`, `PaymentsPanel`, and `repairColumns` (shared table columns) |
-| `web/components/clients/` | `ClientNotes`, `ClientDevices` |
+| `components/ui/` | shadcn/ui base components (button, card, table, input, native-select, badge, sheet, dropdown-menu, sonner…). Add more with `npx shadcn@latest add <name>`. |
+| `components/kat/` | KAT building blocks on top of shadcn/ui: `Button`, `LinkButton`, `Panel`, `PageHeader`, `TwoColumns`, `Detail`, `StatGrid`/`StatCard`, `DataTable`, `StatusBadge` (coloured by status), `Alert`, `Loading`, `Async`, `SearchBox`, and form parts: `ApiForm`, `SubmitButton`, `Field`, `TextAreaField`, `Select`, `SelectField`, `CheckboxField`. Import them from `@/components/kat`. |
+| `components/layout/` | `Sidebar`, `TopBar` (account menu, slide-out menu on phones). The menu items are in `nav.ts`. |
+| `components/repairs/` | `RepairInfo`, `RepairUpdateForm`, `PartsPanel`, `PaymentsPanel`, and `repairColumns` (shared table columns) |
+| `components/clients/` | `ClientNotes`, `ClientDevices` |
 
 `ApiForm` does the work every form needs: it sends the fields to the API, shows a spinner on the button while saving, and shows the success or error message as a pop-up. A form only lists its fields:
 
@@ -45,7 +46,7 @@ The interface uses **[shadcn/ui](https://ui.shadcn.com)** (free, MIT licence), w
 </ApiForm>
 ```
 
-The brand colours are the CSS variables at the top of `web/app/globals.css`.
+The brand colours are the CSS variables at the top of `app/globals.css`.
 
 ## Run locally (development)
 
@@ -55,14 +56,13 @@ Requirements: Python 3.12 and Node.js 20 or newer.
 ```
 python -m venv .venv
 .venv\Scripts\activate          (macOS/Linux: source .venv/bin/activate)
-pip install -r api/requirements.txt
+pip install -r requirements.txt
 python api/app.py
 ```
 The API runs on http://127.0.0.1:5000.
 
-**2. Web** (terminal 2)
+**2. Website** (terminal 2, also from the project folder)
 ```
-cd web
 npm install
 npm run dev
 ```
@@ -74,5 +74,9 @@ Open **http://localhost:3000**.
 
 On a fresh database, the first General Manager account comes from `KAT_ADMIN_USERNAME`, `KAT_ADMIN_PASSWORD` and `KAT_ADMIN_NAME`. Set them before the first start. Also set `KAT_SECRET_KEY` in production.
 
-## Deploy for free
+## Deploy on Vercel
+Push to `main`: Vercel builds the Next.js website and runs `api/app.py` as a Python function (settings in `vercel.json`).
+Set these environment variables in the Vercel project: `DATABASE_URL` (Neon), `KAT_SECRET_KEY` (long random text), `KAT_COOKIE_SECURE=1`, and optionally `RESEND_API_KEY`, `KAT_EMAIL_FROM`.
+
+## Deploy for free on your own server
 See **[DEPLOY.md](DEPLOY.md)**. It covers an Oracle Cloud "Always Free" server (or a shop PC) with Docker, free HTTPS and a free DuckDNS address, at a total cost of 0 RWF.
