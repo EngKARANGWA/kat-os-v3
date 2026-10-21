@@ -291,6 +291,7 @@ def logout(): session.clear(); return jsonify(ok=True)
 @app.get("/api/auth/me")
 @login_required
 def me(): return jsonify(user=user_json(current_user()))
+@app.get("/healthz")  # kept for uptime monitors that use the old address
 @app.get("/api/healthz")
 def healthz():
     db.session.execute(db.text("select 1"))
