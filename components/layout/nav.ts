@@ -20,7 +20,7 @@ import {
 
 export type NavItem = { href: string; label: string; icon: LucideIcon };
 
-// Sidebar menu. MANAGER_NAV is only shown to the General Manager.
+// Sidebar menu. Each person only sees the pages their permissions allow (lib/permissions.ts).
 export const NAV: NavItem[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/device/scan", label: "Scan IMEI / Serial", icon: ScanLine },

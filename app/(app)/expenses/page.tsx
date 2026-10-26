@@ -2,7 +2,7 @@
 
 import { Plus } from "lucide-react";
 import { ApiForm, Async, DataTable, Field, PageHeader, Panel, SelectField, SubmitButton, useFilters } from "@/components/kat";
-import { ManagerOnly } from "@/components/Session";
+import { RequirePermission } from "@/components/Session";
 import { api, useApi } from "@/lib/api";
 import { fmtDateTime, money } from "@/lib/format";
 
@@ -68,10 +68,10 @@ function Expenses() {
 export default function ExpensesPage() {
   return (
     <>
-      <PageHeader title="Expenses" description="Visible to the General Manager only. Included in today's profit/loss on the dashboard." />
-      <ManagerOnly>
+      <PageHeader title="Expenses" description="Only for staff with the Expenses permission. Included in today's profit/loss on the dashboard." />
+      <RequirePermission permission="expenses">
         <Expenses />
-      </ManagerOnly>
+      </RequirePermission>
     </>
   );
 }

@@ -5,7 +5,7 @@ import { Pencil, Plus } from "lucide-react";
 import { Async, DataTable, PageHeader, Panel, StatCard, StatGrid, useFilters } from "@/components/kat";
 import { DeleteProductButton } from "@/components/products/DeleteProductButton";
 import { ProductDialog, profitOf } from "@/components/products/ProductDialog";
-import { ManagerOnly } from "@/components/Session";
+import { RequirePermission } from "@/components/Session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useApi } from "@/lib/api";
@@ -120,8 +120,8 @@ function Products() {
 
 export default function ProductsPage() {
   return (
-    <ManagerOnly>
+    <RequirePermission permission="products">
       <Products />
-    </ManagerOnly>
+    </RequirePermission>
   );
 }

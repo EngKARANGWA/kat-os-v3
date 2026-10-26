@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApi } from "@/lib/api";
+import { can } from "@/lib/permissions";
 import { DEVICE_CATEGORIES, PART_CATEGORIES } from "@/lib/constants";
 import { money } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -233,7 +234,7 @@ export default function InventoryPage() {
         initial={open?.kind === "scan" && open.productId ? { productId: open.productId, unit: open.unit ?? "piece" } : null}
         products={catalogue?.products ?? []}
         items={items}
-        isManager={me.is_manager}
+        isManager={can(me, "products")}
         onSaved={refresh}
       />
       <CheckOutDialog

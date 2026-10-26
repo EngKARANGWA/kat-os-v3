@@ -46,6 +46,23 @@ SHOP_PHONE = "0788 882 114"
 STATUSES = ["Received","Diagnosing","Waiting for Approval","Repairing","Ready","Collected","Cancelled"]
 ROLES = ["General Manager","Receptionist","Technician"]
 MANAGER_ROLES = ["Admin","General Manager"]
+# What a staff member may use. The General Manager always has everything (plus Users, Branches and Audit Log, which only managers get).
+# Other staff get their role's defaults, which the manager can change per person.
+PERMISSIONS = [
+    {"key":"clients","label":"Clients & devices","description":"Register clients, add notes and devices, scan IMEI / serial","group":"Daily work"},
+    {"key":"repairs","label":"Repairs","description":"Create and update repair tickets, payments and parts used","group":"Daily work"},
+    {"key":"inventory","label":"Inventory","description":"See stock, add stock, check in and check out, receipts","group":"Daily work"},
+    {"key":"documents","label":"Documents","description":"Print invoices, quotations, receipts and warranty cards","group":"Daily work"},
+    {"key":"services","label":"Services & prices","description":"Add services and change prices","group":"Daily work"},
+    {"key":"notifications","label":"Notifications","description":"See and send client messages","group":"Daily work"},
+    {"key":"reports","label":"Reports","description":"Repair and revenue reports","group":"Daily work"},
+    {"key":"finance","label":"Sales & profit","description":"Today's sales, costs and profit on the dashboard","group":"Management"},
+    {"key":"products","label":"Products","description":"Add, edit and delete products","group":"Management"},
+    {"key":"expenses","label":"Expenses","description":"Record and see expenses","group":"Management"},
+]
+PERMISSION_KEYS = [p["key"] for p in PERMISSIONS]
+DAILY_WORK = [p["key"] for p in PERMISSIONS if p["group"]=="Daily work"]
+ROLE_PERMISSIONS = {"General Manager":PERMISSION_KEYS,"Receptionist":DAILY_WORK,"Technician":DAILY_WORK}
 DEVICE_CATEGORIES = ["iPhone","MacBook","iPad"]
 PART_CATEGORIES = ["Screen","Battery","Back Glass","Flex Cable","Other"]
 EXPENSE_CATEGORIES = ["Courier / Carrier","Money Transfer Fee","Transport","Customs","Rent","Salary","Utilities","Stock Expense","Other"]
@@ -73,6 +90,7 @@ class Branch(db.Model):
     id=db.Column(db.Integer,primary_key=True); name=db.Column(db.String(100),nullable=False); location=db.Column(db.String(180)); phone=db.Column(db.String(40)); active=db.Column(db.Boolean,default=True)
 class User(db.Model):
     id=db.Column(db.Integer,primary_key=True); full_name=db.Column(db.String(120),nullable=False); username=db.Column(db.String(80),unique=True,nullable=False); password_hash=db.Column(db.String(255),nullable=False); role=db.Column(db.String(30),default="Technician"); work_email=db.Column(db.String(120)); branch_id=db.Column(db.Integer,db.ForeignKey("branch.id")); active=db.Column(db.Boolean,default=True)
+    permissions=db.Column(db.Text)  # comma-separated keys from PERMISSIONS; empty column = the role's defaults
     branch=db.relationship("Branch")
 class Client(db.Model):
     id=db.Column(db.Integer,primary_key=True); full_name=db.Column(db.String(120),nullable=False); phone=db.Column(db.String(30),nullable=False,index=True); email=db.Column(db.String(120)); address=db.Column(db.String(180)); created_at=db.Column(db.DateTime,default=datetime.utcnow)
@@ -139,6 +157,24 @@ def login_required(fn):
         if not current_user(): raise Unauthorized("Please sign in.")
         return fn(*a,**k)
     return w
+def permissions_of(u):
+    if not u: return []
+    if is_manager(u): return list(PERMISSION_KEYS)
+    if u.permissions is None: return list(ROLE_PERMISSIONS.get(u.role,[]))
+    return [k for k in PERMISSION_KEYS if k in u.permissions.split(",")]
+def can(u,*keys): return any(k in permissions_of(u) for k in keys)
+def permission_required(*keys):
+    """The signed-in user needs at least one of these permissions."""
+    labels=" or ".join(p["label"] for p in PERMISSIONS if p["key"] in keys)
+    def deco(fn):
+        @wraps(fn)
+        def w(*a,**k):
+            u=current_user()
+            if not u: raise Unauthorized("Please sign in.")
+            if not can(u,*keys): raise Forbidden(f"You do not have access to {labels}. Ask the General Manager.")
+            return fn(*a,**k)
+        return w
+    return deco
 def admin_required(fn):
     @wraps(fn)
     def w(*a,**k):
@@ -230,7 +266,7 @@ def send_real_notification_if_configured(n):
     return ok,info
 
 # ---------- JSON shapes ----------
-def user_json(u): return {"id":u.id,"full_name":u.full_name,"username":u.username,"role":u.role,"work_email":u.work_email,"branch_id":u.branch_id,"branch":u.branch.name if u.branch else None,"active":u.active,"is_manager":is_manager(u)}
+def user_json(u): return {"id":u.id,"full_name":u.full_name,"username":u.username,"role":u.role,"work_email":u.work_email,"branch_id":u.branch_id,"branch":u.branch.name if u.branch else None,"active":u.active,"is_manager":is_manager(u),"permissions":permissions_of(u),"custom_permissions":u.permissions is not None and not is_manager(u)}
 def branch_json(b): return {"id":b.id,"name":b.name,"location":b.location,"phone":b.phone,"active":b.active}
 def client_json(c,lookup=False):
     out={"id":c.id,"full_name":c.full_name,"phone":c.phone,"email":c.email,"address":c.address,"created_at":iso(c.created_at),"repair_count":len(c.repairs)}
@@ -307,7 +343,7 @@ def meta():
 def dashboard():
     today=date.today(); q=Repair.query; u=current_user()
     out=dict(total=q.count(),open_repairs=q.filter(Repair.status.notin_(["Collected","Cancelled"])).count(),ready=q.filter_by(status="Ready").count(),overdue=q.filter(Repair.deadline.isnot(None),Repair.deadline<today,Repair.status.notin_(["Ready","Collected","Cancelled"])).count(),recent=[repair_json(r) for r in with_repair_details(Repair.query).order_by(Repair.created_at.desc()).limit(12).all()],low_stock=InventoryItem.query.filter(InventoryItem.quantity<=InventoryItem.reorder_level).count(),queued=Notification.query.filter_by(status="Queued").count(),finance=None)
-    if is_manager(u):
+    if can(u,"finance"):
         start=datetime.combine(today,datetime.min.time()); end=datetime.combine(today+timedelta(days=1),datetime.min.time())
         sales=sum(x.amount for x in Payment.query.filter(Payment.paid_at>=start,Payment.paid_at<end).all())
         parts_cost=sum(x.quantity*x.item.cost_price for x in RepairPart.query.filter(RepairPart.used_at>=start,RepairPart.used_at<end).all())
@@ -319,7 +355,7 @@ def dashboard():
 
 # ---------- Clients & devices ----------
 @app.get("/api/clients")
-@login_required
+@permission_required("clients","repairs")
 def clients():
     q=request.args.get("q","").strip(); rows=Client.query.options(selectinload(Client.repairs),selectinload(Client.devices))
     if q:
@@ -328,27 +364,27 @@ def clients():
         rows=rows.filter(db.or_(Client.full_name.ilike(f"%{q}%"),Client.phone.ilike(f"%{q}%"),Client.id.in_(ids+repair_ids)))
     return jsonify(clients=[client_json(c,lookup=True) for c in rows.order_by(Client.created_at.desc()).all()])
 @app.post("/api/clients")
-@login_required
+@permission_required("clients","repairs")
 def new_client():
     data=body()
     c=Client(full_name=required(data,"full_name","Full name"),phone=required(data,"phone","Phone"),email=text(data,"email"),address=text(data,"address"))
     db.session.add(c); db.session.flush(); audit("Registered client","Client",c.id); db.session.commit()
     return jsonify(client=client_json(c)),201
 @app.get("/api/clients/<int:client_id>")
-@login_required
+@permission_required("clients","repairs")
 def client_detail(client_id):
     c=db.get_or_404(Client,client_id,description="Client not found.")
     return jsonify(client=client_json(c),
         notes=[{"id":n.id,"note":n.note,"author":n.author,"created_at":iso(n.created_at)} for n in sorted(c.notes,key=lambda n:n.created_at or datetime.min,reverse=True)],
         devices=[device_json(d) for d in c.devices],repairs=[repair_json(r) for r in with_repair_details(Repair.query.filter_by(client_id=c.id)).order_by(Repair.created_at.desc()).all()])
 @app.post("/api/clients/<int:client_id>/notes")
-@login_required
+@permission_required("clients")
 def add_client_note(client_id):
     c=db.get_or_404(Client,client_id,description="Client not found."); note=required(body(),"note","Note")
     db.session.add(ClientNote(client_id=c.id,note=note,author=current_user().full_name)); audit("Added client note","Client",c.id); db.session.commit()
     return jsonify(ok=True),201
 @app.post("/api/clients/<int:client_id>/devices")
-@login_required
+@permission_required("clients")
 def add_device(client_id):
     c=db.get_or_404(Client,client_id,description="Client not found."); data=body(); code=text(data,"serial_imei")
     existing=Device.query.filter_by(serial_imei=code).first() if code else None
@@ -357,7 +393,7 @@ def add_device(client_id):
     db.session.add(d); db.session.flush(); audit("Added device","Device",d.id); db.session.commit()
     return jsonify(device=device_json(d)),201
 @app.get("/api/devices/scan")
-@login_required
+@permission_required("clients","repairs")
 def device_scan():
     q=request.args.get("q","").strip(); d=Device.query.filter(Device.serial_imei.ilike(q)).first() if q else None
     return jsonify(device=device_json(d) if d else None)
@@ -381,24 +417,25 @@ def search_everything():
     clients_=Client.query.options(selectinload(Client.repairs)).filter(db.or_(Client.full_name.ilike(like),Client.phone.ilike(like),Client.email.ilike(like))).order_by(Client.full_name).limit(6).all()
     devices_=Device.query.options(joinedload(Device.client)).filter(db.or_(Device.serial_imei.ilike(like),Device.model.ilike(like))).limit(6).all()
     items_=InventoryItem.query.options(joinedload(InventoryItem.branch)).filter(db.or_(InventoryItem.sku.ilike(like),InventoryItem.name.ilike(like),InventoryItem.compatible_models.ilike(like))).order_by(InventoryItem.name).limit(6).all()
-    return jsonify(repairs=[repair_json(r) for r in repairs_],clients=[client_json(c) for c in clients_],
-        devices=[dict(device_json(d),client_name=d.client.full_name) for d in devices_],items=[item_json(i) for i in items_])
+    u=current_user(); people=can(u,"clients","repairs")  # only show what this person may open
+    return jsonify(repairs=[repair_json(r) for r in repairs_] if can(u,"repairs") else [],clients=[client_json(c) for c in clients_] if people else [],
+        devices=[dict(device_json(d),client_name=d.client.full_name) for d in devices_] if people else [],items=[item_json(i) for i in items_] if can(u,"inventory") else [])
 
 # ---------- Repairs ----------
 @app.get("/api/repairs")
-@login_required
+@permission_required("repairs")
 def repairs():
     q=request.args.get("q","").strip(); rows=with_repair_details(Repair.query.join(Client))
     if q: rows=rows.filter(db.or_(Repair.ticket_code.ilike(f"%{q}%"),Repair.serial_imei.ilike(f"%{q}%"),Repair.device.ilike(f"%{q}%"),Client.phone.ilike(f"%{q}%"),Client.full_name.ilike(f"%{q}%")))
     return jsonify(repairs=[repair_json(r) for r in rows.order_by(Repair.created_at.desc()).all()])
 @app.get("/api/repairs/options")
-@login_required
+@permission_required("repairs")
 def repair_options():
     techs=User.query.filter_by(active=True).filter(User.role.in_(["Technician"]+MANAGER_ROLES)).all()
     return jsonify(clients=[{"id":c.id,"full_name":c.full_name,"phone":c.phone} for c in Client.query.order_by(Client.full_name).all()],
         technicians=[{"id":t.id,"full_name":t.full_name} for t in techs],branches=[branch_json(b) for b in Branch.query.filter_by(active=True).all()],terms=TERMS)
 @app.post("/api/repairs")
-@login_required
+@permission_required("repairs")
 def new_repair():
     data=body(); cat=required(data,"problem_category","Problem category"); client_id=num(data,"client_id",None)
     if not client_id or not db.session.get(Client,client_id): raise BadRequest("Choose a client.")
@@ -406,14 +443,14 @@ def new_repair():
     db.session.add(r); db.session.flush(); audit("Created repair ticket","Repair",r.id); queue_status_notification(r); db.session.commit()
     return jsonify(repair=repair_json(r)),201
 @app.get("/api/repairs/<int:repair_id>")
-@login_required
+@permission_required("repairs")
 def repair_detail(repair_id):
     r=db.get_or_404(Repair,repair_id,description="Repair not found.")
     return jsonify(repair=repair_json(r,full=True),statuses=STATUSES,payment_methods=PAYMENT_METHODS,
         technicians=[{"id":t.id,"full_name":t.full_name} for t in User.query.filter_by(active=True).all()],
         inventory=[{"id":i.id,"name":i.name,"quantity":i.quantity} for i in InventoryItem.query.filter(InventoryItem.quantity>0).order_by(InventoryItem.name).all()])
 @app.patch("/api/repairs/<int:repair_id>")
-@login_required
+@permission_required("repairs")
 def update_repair(repair_id):
     r=db.get_or_404(Repair,repair_id,description="Repair not found."); data=body()
     status=required(data,"status","Status")
@@ -424,7 +461,7 @@ def update_repair(repair_id):
     audit(f"Updated repair: {old} → {r.status}","Repair",r.id); db.session.commit()
     return jsonify(repair=repair_json(r,full=True))
 @app.post("/api/repairs/<int:repair_id>/payments")
-@login_required
+@permission_required("repairs")
 def add_payment(repair_id):
     r=db.get_or_404(Repair,repair_id,description="Repair not found."); data=body(); amt=num(data,"amount")
     if amt<=0: raise BadRequest("Amount must be greater than zero.")
@@ -432,7 +469,7 @@ def add_payment(repair_id):
     db.session.add(p); db.session.flush(); audit("Recorded payment","Payment",p.id); db.session.commit()
     return jsonify(ok=True),201
 @app.post("/api/repairs/<int:repair_id>/parts")
-@login_required
+@permission_required("repairs")
 def use_part(repair_id):
     r=db.get_or_404(Repair,repair_id,description="Repair not found."); data=body()
     item=db.get_or_404(InventoryItem,num(data,"item_id"),description="Stock item not found."); qty=max(1,num(data,"quantity",1))
@@ -447,18 +484,18 @@ def pdf_response(story,filename):
     buf=BytesIO(); SimpleDocTemplate(buf,pagesize=A4,rightMargin=35,leftMargin=35,topMargin=35,bottomMargin=35).build(story); buf.seek(0)
     return send_file(buf,mimetype="application/pdf",as_attachment=True,download_name=filename)
 @app.get("/api/documents")
-@login_required
+@permission_required("documents")
 def documents():
     return jsonify(repairs=[repair_json(r) for r in with_repair_details(Repair.query).order_by(Repair.created_at.desc()).all()],document_types=DOCUMENT_TYPES)
 @app.get("/api/repairs/<int:repair_id>/documents/<doc_type>.pdf")
-@login_required
+@permission_required("documents")
 def repair_document_pdf(repair_id,doc_type):
     r=db.get_or_404(Repair,repair_id,description="Repair not found."); title=doc_type.replace("-"," ").title(); st=getSampleStyleSheet(); paid=total_paid(r)
     data=[["Client",r.client.full_name],["Phone",r.client.phone],["Ticket",r.ticket_code],["Device",r.device],["IMEI / Serial",r.serial_imei or "—"],["Problem",r.problem_category],["Status",r.status],["Amount",f"{r.quoted_price:,} RWF"],["Paid",f"{paid:,} RWF"],["Balance",f"{max(0,r.quoted_price-paid):,} RWF"],["Warranty until",str(r.warranty_until or "—")],["Date",datetime.now().strftime("%d %b %Y")]]
     story=[Paragraph(f"KIGALI APPLE TECH — {escape(title.upper())}",st["Title"]),Spacer(1,10),pdf_table(data),Spacer(1,18),Paragraph("Client signature: ____________________",st["BodyText"]),Paragraph("Authorized by KAT: ____________________",st["BodyText"]),Spacer(1,12),Paragraph(f"Kigali Apple Tech • Kigali, Rwanda • {SHOP_PHONE}",st["BodyText"])]
     return pdf_response(story,f"{r.ticket_code}-{doc_type}.pdf")
 @app.get("/api/repairs/<int:repair_id>/ticket.pdf")
-@login_required
+@permission_required("repairs","documents")
 def ticket_pdf(repair_id):
     r=db.get_or_404(Repair,repair_id,description="Repair not found."); st=getSampleStyleSheet(); paid=total_paid(r)
     data=[["Client",r.client.full_name],["Phone",r.client.phone],["Device",r.device],["IMEI / Serial",r.serial_imei or "—"],["Problem",r.problem_category],["Status",r.status],["Technician",r.technician.full_name if r.technician else "—"],["Quoted price",f"{r.quoted_price:,} RWF"],["Paid",f"{paid:,} RWF"],["Balance",f"{max(0,r.quoted_price-paid):,} RWF"],["Deadline",str(r.deadline or "—")]]
@@ -467,7 +504,7 @@ def ticket_pdf(repair_id):
 
 # ---------- Inventory, expenses, services ----------
 @app.get("/api/inventory")
-@login_required
+@permission_required("inventory")
 def inventory():
     items=InventoryItem.query.options(joinedload(InventoryItem.branch)).order_by(InventoryItem.name).all()
     # Opened boxes (some items already taken out): how many and how many items are left in them.
@@ -482,7 +519,7 @@ def inventory():
         i._items=(box_items.get(i.id,i.quantity*(i.items_per_box or 1)) if i.unit=="box" else i.quantity)
     return jsonify(items=[item_json(i) for i in items])
 @app.post("/api/inventory")
-@login_required
+@permission_required("inventory")
 def add_inventory():
     data=body()
     opening=max(0,num(data,"quantity"))
@@ -492,7 +529,7 @@ def add_inventory():
     audit("Added inventory item","InventoryItem",item.id); db.session.commit()
     return jsonify(item=item_json(item)),201
 @app.post("/api/inventory/<int:item_id>/adjust")
-@login_required
+@permission_required("inventory")
 def adjust_stock(item_id):
     i=db.get_or_404(InventoryItem,item_id,description="Stock item not found."); delta=num(body(),"delta")
     if delta>0: move_stock(i,"in",delta,"Adjustment")
@@ -501,7 +538,7 @@ def adjust_stock(item_id):
     return jsonify(item=item_json(i))
 def movement_json(m): return {"id":m.id,"item_id":m.item_id,"sku":m.item.sku,"item_name":m.item.name,"direction":m.direction,"quantity":m.quantity,"reason":m.reason,"note":m.note,"repair_id":m.repair_id,"ticket_code":m.repair.ticket_code if m.repair else None,"balance_after":m.balance_after,"created_by":m.created_by,"created_at":iso(m.created_at)}
 @app.post("/api/inventory/check")
-@login_required
+@permission_required("inventory")
 def check_stock():
     """Check In (direction=in) or Check Out (direction=out) by SKU, e.g. from a barcode scan."""
     data=body(); direction=text(data,"direction")
@@ -532,7 +569,7 @@ def clean_codes(raw):
     if dupes: raise BadRequest(f"Scanned twice: {', '.join(dupes[:5])}.")
     return codes
 @app.post("/api/inventory/codes/lookup")
-@login_required
+@permission_required("inventory")
 def lookup_codes():
     """Which of these codes were already checked in (and when)? Used while scanning."""
     codes=[str(c).strip() for c in (body().get("codes") or []) if str(c).strip()][:500]
@@ -540,7 +577,7 @@ def lookup_codes():
     rows=StockCode.query.options(joinedload(StockCode.item)).filter(db.func.lower(StockCode.code).in_([c.lower() for c in codes])).all()
     return jsonify(found=[{"code":r.code,"item_name":r.item.name,"unit":r.item.unit,"checked_in_at":iso(r.created_at),"by":r.created_by} for r in rows])
 @app.post("/api/inventory/checkin-scan")
-@login_required
+@permission_required("inventory")
 def checkin_scan():
     """Check In a product by scanning every piece or every box: adds the number scanned to current stock."""
     data=body()
@@ -581,7 +618,7 @@ def code_out_info(sc):
 def find_code(code):
     return StockCode.query.options(joinedload(StockCode.item)).filter(db.func.lower(StockCode.code)==code.strip().lower()).first()
 @app.post("/api/inventory/codes/out-lookup")
-@login_required
+@permission_required("inventory")
 def out_lookup():
     code=required(body(),"code","Code"); sc=find_code(code)
     if not sc: return jsonify(error=f"{code} was never checked in."),404
@@ -590,7 +627,7 @@ def out_lookup():
 def sale_json(sa): return {"id":sa.id,"number":f"RC{sa.id:05d}","purpose":sa.purpose,"service_name":sa.service_name,"service_price":sa.service_price,"customer_name":sa.customer_name,"customer_phone":sa.customer_phone,"payment_method":sa.payment_method,"items_total":sa.items_total,"total":sa.total,"created_by":sa.created_by,"created_at":iso(sa.created_at),
     "lines":[{"id":l.id,"code":l.code,"description":l.description,"quantity":l.quantity,"unit_price":l.unit_price,"amount":l.amount,"device_serial":l.device_serial} for l in sa.lines]}
 @app.post("/api/sales")
-@login_required
+@permission_required("inventory")
 def create_sale():
     """Check Out by scanning: takes the scanned pieces / boxes / items out of stock and makes a receipt."""
     data=body(); purpose=text(data,"purpose")
@@ -633,12 +670,12 @@ def create_sale():
     audit(f"Checked out {sale.items_total} items — receipt {number} ({purpose}), {sale.total:,} RWF","Sale",sale.id); db.session.commit()
     return jsonify(sale=sale_json(sale)),201
 @app.get("/api/sales")
-@login_required
+@permission_required("inventory")
 def sales_list():
     rows=Sale.query.options(selectinload(Sale.lines)).order_by(Sale.created_at.desc(),Sale.id.desc()).limit(2000).all()
     return jsonify(sales=[sale_json(sa) for sa in rows])
 @app.get("/api/sales/<int:sale_id>/receipt.pdf")
-@login_required
+@permission_required("inventory")
 def receipt_pdf(sale_id):
     sa=db.get_or_404(Sale,sale_id,description="Receipt not found."); st=getSampleStyleSheet(); number=f"RC{sa.id:05d}"
     head=[["Receipt",number],["Date",sa.created_at.strftime("%d %b %Y %H:%M") if sa.created_at else "—"],["For","Sale" if sa.purpose=="sale" else "Repair"],["Served by",sa.created_by or "—"]]
@@ -655,16 +692,16 @@ def receipt_pdf(sale_id):
     story=[Paragraph("KIGALI APPLE TECH — RECEIPT",st["Title"]),pdf_table(head),Spacer(1,12),items,Spacer(1,18),Paragraph("Thank you for your business.",st["BodyText"]),Paragraph(f"Kigali Apple Tech • Kigali, Rwanda • {SHOP_PHONE}",st["BodyText"])]
     return pdf_response(story,f"{number}.pdf")
 @app.get("/api/inventory/movements")
-@login_required
+@permission_required("inventory")
 def stock_movements():
     rows=StockMovement.query.options(joinedload(StockMovement.item),joinedload(StockMovement.repair)).order_by(StockMovement.created_at.desc(),StockMovement.id.desc()).limit(2000).all()
     return jsonify(movements=[movement_json(m) for m in rows],check_in_reasons=CHECK_IN_REASONS,check_out_reasons=CHECK_OUT_REASONS)
 @app.get("/api/expenses")
-@admin_required
+@permission_required("expenses")
 def expenses():
     return jsonify(expenses=[{"id":e.id,"category":e.category,"amount":e.amount,"description":e.description,"created_by":e.created_by,"created_at":iso(e.created_at)} for e in Expense.query.order_by(Expense.created_at.desc()).limit(2000).all()],categories=EXPENSE_CATEGORIES)
 @app.post("/api/expenses")
-@admin_required
+@permission_required("expenses")
 def add_expense():
     data=body()
     e=Expense(category=required(data,"category","Category"),amount=num(data,"amount"),description=text(data,"description"),created_by=current_user().full_name)
@@ -674,7 +711,7 @@ def add_expense():
 @login_required
 def services(): return jsonify(services=[{"id":s.id,"name":s.name,"price":s.price,"warranty_days":s.warranty_days,"active":s.active} for s in Service.query.order_by(Service.name).all()])
 @app.post("/api/services")
-@login_required
+@permission_required("services")
 def add_service():
     data=body(); s=Service(name=required(data,"name","Service"),price=num(data,"price"),warranty_days=num(data,"warranty_days",21))
     db.session.add(s); db.session.commit()
@@ -682,11 +719,11 @@ def add_service():
 
 # ---------- Notifications ----------
 @app.get("/api/notifications")
-@login_required
+@permission_required("notifications")
 def notifications():
     return jsonify(notifications=[{"id":n.id,"repair_id":n.repair_id,"channel":n.channel,"recipient":n.recipient,"message":n.message,"status":n.status,"created_at":iso(n.created_at)} for n in Notification.query.order_by(Notification.created_at.desc()).limit(1000).all()],email_ready=bool(RESEND_API_KEY),email_from=EMAIL_FROM)
 @app.post("/api/notifications/<int:notification_id>/send")
-@login_required
+@permission_required("notifications")
 def resend_notification(notification_id):
     n=db.get_or_404(Notification,notification_id,description="Notification not found."); ok,info=send_real_notification_if_configured(n)
     audit(f"Resent {n.channel} notification ({n.status})","Notification",n.id); db.session.commit()
@@ -720,21 +757,21 @@ def product_fields(data,current=None):
 def products():
     return jsonify(products=[product_json(pr) for pr in Product.query.order_by(Product.name).all()],types=PRODUCT_TYPES)
 @app.post("/api/products")
-@admin_required
+@permission_required("products")
 def add_product():
     name,product_type,purchase_price,selling_price=product_fields(body())
     pr=Product(name=name,product_type=product_type,purchase_price=purchase_price,selling_price=selling_price,created_by=current_user().full_name)
     db.session.add(pr); db.session.flush(); audit(f"Added product {name}","Product",pr.id); db.session.commit()
     return jsonify(product=product_json(pr)),201
 @app.patch("/api/products/<int:product_id>")
-@admin_required
+@permission_required("products")
 def update_product(product_id):
     pr=db.get_or_404(Product,product_id,description="Product not found.")
     pr.name,pr.product_type,pr.purchase_price,pr.selling_price=product_fields(body(),current=pr)
     audit(f"Edited product {pr.name}","Product",pr.id); db.session.commit()
     return jsonify(product=product_json(pr))
 @app.delete("/api/products/<int:product_id>")
-@admin_required
+@permission_required("products")
 def delete_product(product_id):
     pr=db.get_or_404(Product,product_id,description="Product not found.")
     lines=InventoryItem.query.filter_by(product_id=pr.id).all()
@@ -744,23 +781,59 @@ def delete_product(product_id):
 
 # ---------- Reports & admin ----------
 @app.get("/api/reports")
-@login_required
+@permission_required("reports")
 def reports():
     rows=Repair.query.all(); paid=sum(total_paid(r) for r in rows); quoted=sum(r.quoted_price for r in rows)
     return jsonify(total=len(rows),collected=sum(1 for r in rows if r.status=="Collected"),revenue=paid,outstanding=max(0,quoted-paid),warranty=sum(1 for r in rows if r.warranty_until and r.warranty_until>=date.today()))
+def read_permissions(data,role):
+    """Permissions sent by the form. Stored only when they differ from the role's defaults, so later default changes still apply."""
+    if role in MANAGER_ROLES: return None
+    raw=data.get("permissions") or []
+    if isinstance(raw,str): raw=[x for x in raw.split(",") if x]
+    keys=[k for k in PERMISSION_KEYS if k in raw]
+    return None if keys==list(ROLE_PERMISSIONS.get(role,[])) else ",".join(keys)
+def check_username(username,current=None):
+    clash=User.query.filter(db.func.lower(User.username)==username.lower()).first()
+    if clash and clash is not current: raise Conflict(f"The username “{username}” is already taken.")
 @app.get("/api/users")
 @admin_required
-def users(): return jsonify(users=[user_json(u) for u in User.query.options(joinedload(User.branch)).all()],roles=ROLES)
+def users(): return jsonify(users=[user_json(u) for u in User.query.options(joinedload(User.branch)).order_by(User.full_name).all()],roles=ROLES,permissions=PERMISSIONS,role_permissions=ROLE_PERMISSIONS)
 @app.post("/api/users")
 @admin_required
 def add_user():
     data=body(); role=required(data,"role","Role")
     if role not in ROLES: raise BadRequest("Unknown role.")
     password=str(data.get("password") or "")
-    if not password: raise BadRequest("Password is required.")
-    u=User(full_name=required(data,"full_name","Full name"),username=required(data,"username","Username"),password_hash=generate_password_hash(password),role=role,work_email=text(data,"work_email"),branch_id=optional_id(data,"branch_id"))
-    db.session.add(u); db.session.commit()
+    if len(password)<6: raise BadRequest("The password needs at least 6 characters.")
+    username=required(data,"username","Username"); check_username(username)
+    u=User(full_name=required(data,"full_name","Full name"),username=username,password_hash=generate_password_hash(password),role=role,work_email=text(data,"work_email"),branch_id=optional_id(data,"branch_id"),permissions=read_permissions(data,role) if "permissions" in data else None)
+    db.session.add(u); db.session.flush(); audit(f"Created staff user {u.username} ({role})","User",u.id); db.session.commit()
     return jsonify(user=user_json(u)),201
+@app.patch("/api/users/<int:user_id>")
+@admin_required
+def edit_user(user_id):
+    u=db.get_or_404(User,user_id,description="User not found."); data=body(); me=current_user()
+    role=text(data,"role",u.role)
+    if role not in ROLES and role!=u.role: raise BadRequest("Unknown role.")
+    active=bool(data.get("active",u.active))
+    if u.id==me.id and (not active or role not in MANAGER_ROLES): raise BadRequest("You cannot remove your own General Manager access or deactivate yourself.")
+    if u.role in MANAGER_ROLES and u.active and (role not in MANAGER_ROLES or not active):
+        others=User.query.filter(User.id!=u.id,User.active.is_(True),User.role.in_(MANAGER_ROLES)).count()
+        if not others: raise BadRequest("There must be at least one active General Manager.")
+    if "username" in data:
+        username=required(data,"username","Username"); check_username(username,u); u.username=username
+    if "full_name" in data: u.full_name=required(data,"full_name","Full name")
+    if "work_email" in data: u.work_email=text(data,"work_email")
+    if "branch_id" in data: u.branch_id=optional_id(data,"branch_id")
+    password=str(data.get("password") or "")
+    if password:
+        if len(password)<6: raise BadRequest("The password needs at least 6 characters.")
+        u.password_hash=generate_password_hash(password)
+    if "permissions" in data: u.permissions=read_permissions(data,role)
+    elif role!=u.role: u.permissions=None  # new role, no ticks sent: use the new role's defaults
+    u.role=role; u.active=active
+    audit(f"Updated staff user {u.username} ({role}{'' if active else ', deactivated'})","User",u.id); db.session.commit()
+    return jsonify(user=user_json(u))
 @app.get("/api/branches")
 @login_required
 def branches(): return jsonify(branches=[branch_json(b) for b in Branch.query.all()])
@@ -804,6 +877,9 @@ def upgrade_schema():
             with db.engine.begin() as conn:
                 for n,sql in missing: conn.execute(db.text(f"ALTER TABLE inventory_item ADD COLUMN {n} {sql}"))
             app.logger.warning("Upgraded the inventory_item table: added %s.", ", ".join(n for n,_ in missing))
+    if "user" in tables and "permissions" not in {c["name"] for c in insp.get_columns("user")}:
+        with db.engine.begin() as conn: conn.execute(db.text('ALTER TABLE "user" ADD COLUMN permissions TEXT'))
+        app.logger.warning("Upgraded the user table: added permissions.")
     if "stock_code" in tables:
         cols={c["name"] for c in insp.get_columns("stock_code")}
         missing=[(n,sql) for n,sql in (("status","VARCHAR(10) NOT NULL DEFAULT 'in'"),("items_left","INTEGER"),("checked_out_at","TIMESTAMP")) if n not in cols]

@@ -1,16 +1,18 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { api } from "@/lib/api";
 import type { User } from "@/lib/types";
-import { SessionContext } from "@/components/Session";
+import { canOpen } from "@/lib/permissions";
+import { NoAccess, SessionContext } from "@/components/Session";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [me, setMe] = useState<User | null>(null);
 
   useEffect(() => {
@@ -33,10 +35,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <SessionContext.Provider value={me}>
-      <Sidebar manager={me.is_manager} />
+      <Sidebar me={me} />
       <div className="min-h-screen lg:pl-64">
         <TopBar me={me} onLogout={logout} />
-        <main className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">{children}</main>
+        <main className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">{canOpen(me, pathname) ? children : <NoAccess />}</main>
       </div>
     </SessionContext.Provider>
   );

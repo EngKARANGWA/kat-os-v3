@@ -8,7 +8,13 @@ export type User = {
   branch: string | null;
   active: boolean;
   is_manager: boolean;
+  /** What this person may use (the General Manager has all). */
+  permissions: string[];
+  /** True when the manager changed this person's permissions from their role's defaults. */
+  custom_permissions: boolean;
 };
+
+export type Permission = { key: string; label: string; description: string; group: string };
 
 export type Branch = { id: number; name: string; location: string | null; phone: string | null; active: boolean };
 

@@ -41,7 +41,7 @@ export function TopBar({ me, onLogout }: { me: User; onLogout: () => void }) {
           <SheetContent side="left" className="w-72 gap-0 overflow-y-auto border-0 bg-sidebar p-0 [&_[data-slot=sheet-close]]:text-white [&_[data-slot=sheet-close]]:hover:bg-sidebar-accent">
             <SheetTitle className="sr-only">Menu</SheetTitle>
             <Brand />
-            <SidebarNav manager={me.is_manager} onNavigate={() => setMenuOpen(false)} />
+            <SidebarNav me={me} onNavigate={() => setMenuOpen(false)} />
           </SheetContent>
         </Sheet>
         <div className="hidden whitespace-nowrap md:block">

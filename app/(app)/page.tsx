@@ -5,6 +5,7 @@ import { Async, DataTable, LinkButton, PageHeader, Panel, StatCard, StatGrid } f
 import { repairColumns as col } from "@/components/repairs/columns";
 import { useMe } from "@/components/Session";
 import { useApi } from "@/lib/api";
+import { can } from "@/lib/permissions";
 import { money } from "@/lib/format";
 import type { RepairSummary } from "@/lib/types";
 
@@ -22,11 +23,11 @@ type Dashboard = {
 export default function DashboardPage() {
   const me = useMe();
   const { data, error } = useApi<Dashboard>("/dashboard");
-  const newRepair = (
+  const newRepair = can(me, "repairs") ? (
     <LinkButton href="/repairs/new" icon={<Plus />}>
       New Repair
     </LinkButton>
-  );
+  ) : undefined;
 
   return (
     <>

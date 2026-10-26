@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { canOpen } from "@/lib/permissions";
+import type { User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { MANAGER_NAV, NAV, type NavItem } from "./nav";
 
@@ -42,27 +44,30 @@ function NavGroup({ title, items, isActive, onNavigate }: { title?: string; item
 }
 
 /** The menu itself; used in the desktop sidebar and in the phone slide-out menu. */
-export function SidebarNav({ manager, onNavigate }: { manager: boolean; onNavigate?: () => void }) {
+export function SidebarNav({ me, onNavigate }: { me: User; onNavigate?: () => void }) {
   const pathname = usePathname();
-  const all = manager ? [...NAV, ...MANAGER_NAV] : NAV;
+  // Only the pages this person may open (see lib/permissions.ts).
+  const daily = NAV.filter((l) => canOpen(me, l.href));
+  const management = MANAGER_NAV.filter((l) => canOpen(me, l.href));
+  const all = [...daily, ...management];
   // Exact match wins (e.g. /clients/new → "Register Client"); otherwise the section prefix (e.g. /clients/12 → "Clients").
   const exact = all.some((l) => l.href === pathname);
   const isActive = (href: string) => pathname === href || (!exact && href !== "/" && pathname.startsWith(href + "/"));
 
   return (
     <nav className="flex flex-col pb-6">
-      <NavGroup items={NAV} isActive={isActive} onNavigate={onNavigate} />
-      {manager && <NavGroup title="Management" items={MANAGER_NAV} isActive={isActive} onNavigate={onNavigate} />}
+      <NavGroup items={daily} isActive={isActive} onNavigate={onNavigate} />
+      {management.length > 0 && <NavGroup title="Management" items={management} isActive={isActive} onNavigate={onNavigate} />}
     </nav>
   );
 }
 
 /** Fixed sidebar on desktop (hidden on phones, where the top bar menu button opens it). */
-export function Sidebar({ manager }: { manager: boolean }) {
+export function Sidebar({ me }: { me: User }) {
   return (
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col overflow-y-auto bg-sidebar lg:flex">
       <Brand />
-      <SidebarNav manager={manager} />
+      <SidebarNav me={me} />
     </aside>
   );
 }
