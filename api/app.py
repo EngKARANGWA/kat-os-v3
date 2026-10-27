@@ -6,7 +6,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from werkzeug.exceptions import HTTPException, BadRequest, Unauthorized, Forbidden, Conflict
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from io import BytesIO
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -198,6 +198,12 @@ def num(data,key,default=0):
     except ValueError: raise BadRequest(f"{key.replace('_',' ').capitalize()} must be a whole number.")
 def optional_id(data,key):
     return num(data,key,None)
+# Times are stored in UTC; the shop's day runs midnight to midnight in Kigali (UTC+2, no summer time).
+KIGALI = timezone(timedelta(hours=2))
+def kigali_today(): return datetime.now(KIGALI).date()
+def kigali_day_start_utc(d):
+    """Midnight in Kigali at the start of day d, as a naive UTC time like the stored timestamps."""
+    return datetime.combine(d,datetime.min.time(),KIGALI).astimezone(timezone.utc).replace(tzinfo=None)
 def parse_date(v):
     if not v: return None
     try: return datetime.strptime(str(v),"%Y-%m-%d").date()
@@ -341,16 +347,22 @@ def meta():
 @app.get("/api/dashboard")
 @login_required
 def dashboard():
-    today=date.today(); q=Repair.query; u=current_user()
+    today=kigali_today(); q=Repair.query; u=current_user()
     out=dict(total=q.count(),open_repairs=q.filter(Repair.status.notin_(["Collected","Cancelled"])).count(),ready=q.filter_by(status="Ready").count(),overdue=q.filter(Repair.deadline.isnot(None),Repair.deadline<today,Repair.status.notin_(["Ready","Collected","Cancelled"])).count(),recent=[repair_json(r) for r in with_repair_details(Repair.query).order_by(Repair.created_at.desc()).limit(12).all()],low_stock=InventoryItem.query.filter(InventoryItem.quantity<=InventoryItem.reorder_level).count(),queued=Notification.query.filter_by(status="Queued").count(),finance=None)
     if can(u,"finance"):
-        start=datetime.combine(today,datetime.min.time()); end=datetime.combine(today+timedelta(days=1),datetime.min.time())
+        # Money for the chosen days (?from=YYYY-MM-DD&to=YYYY-MM-DD, both included). Default: today.
+        try:
+            first=date.fromisoformat(request.args["from"]) if request.args.get("from") else today
+            last=date.fromisoformat(request.args["to"]) if request.args.get("to") else first
+        except ValueError: raise BadRequest("Dates must look like 2026-10-26.")
+        if last<first: first,last=last,first
+        start=kigali_day_start_utc(first); end=kigali_day_start_utc(last+timedelta(days=1))
         sales=sum(x.amount for x in Payment.query.filter(Payment.paid_at>=start,Payment.paid_at<end).all())
-        parts_cost=sum(x.quantity*x.item.cost_price for x in RepairPart.query.filter(RepairPart.used_at>=start,RepairPart.used_at<end).all())
+        parts_cost=sum(x.quantity*x.item.cost_price for x in RepairPart.query.options(joinedload(RepairPart.item)).filter(RepairPart.used_at>=start,RepairPart.used_at<end).all())
         receipts=Sale.query.filter(Sale.created_at>=start,Sale.created_at<end).all()
         sales+=sum(x.total for x in receipts); parts_cost+=sum(x.cost for x in receipts)
         expenses_=sum(x.amount for x in Expense.query.filter(Expense.created_at>=start,Expense.created_at<end).all())
-        out["finance"]=dict(sales=sales,parts_cost=parts_cost,expenses=expenses_,profit=sales-parts_cost-expenses_)
+        out["finance"]=dict(sales=sales,parts_cost=parts_cost,expenses=expenses_,profit=sales-parts_cost-expenses_,**{"from":first.isoformat(),"to":last.isoformat()})
     return jsonify(out)
 
 # ---------- Clients & devices ----------
