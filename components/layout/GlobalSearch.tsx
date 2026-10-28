@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { LoaderCircle, Package, Search, Smartphone, User, Wrench } from "lucide-react";
 import { StatusBadge } from "@/components/kat";
 import { Button } from "@/components/ui/button";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { api } from "@/lib/api";
+import { useScannerAnywhere } from "@/lib/scanner";
 import type { Client, Device, InventoryItem, RepairSummary } from "@/lib/types";
 
 type Results = { repairs: RepairSummary[]; clients: Client[]; devices: (Device & { client_name: string })[]; items: InventoryItem[] };
@@ -15,6 +16,7 @@ const EMPTY: Results = { repairs: [], clients: [], devices: [], items: [] };
 /**
  * "Search everything" box in the top bar (Ctrl+K or /). Finds repairs, clients, devices and stock items.
  * Scanning a ticket or IMEI with a USB scanner opens the first match (the scanner presses Enter).
+ * A code scanned while no box has the cursor opens this search; one exact match (IMEI, ticket, SKU) opens straight away.
  */
 export function GlobalSearch() {
   const router = useRouter();
@@ -22,6 +24,16 @@ export function GlobalSearch() {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Results>(EMPTY);
   const [loading, setLoading] = useState(false);
+  const scanned = useRef<string | null>(null); // code from a scan anywhere on the page, waiting for its results
+
+  const pathname = usePathname();
+
+  // The Scan IMEI page handles its own scans.
+  useScannerAnywhere((code) => {
+    scanned.current = code;
+    setQ(code);
+    setOpen(true);
+  }, !pathname.startsWith("/device/scan"));
 
   // Keyboard shortcut: Ctrl+K / Cmd+K anywhere, or "/" when not typing in a field.
   useEffect(() => {
@@ -47,7 +59,19 @@ export function GlobalSearch() {
     let current = true;
     const t = setTimeout(() => {
       api<Results>(`/search?q=${encodeURIComponent(term)}`)
-        .then((r) => current && setResults(r))
+        .then((r) => {
+          if (!current) return;
+          setResults(r);
+          if (scanned.current === term) {
+            scanned.current = null;
+            const href = exactMatch(r, term);
+            if (href) {
+              setOpen(false);
+              setQ("");
+              router.push(href);
+            }
+          }
+        })
         .catch(() => current && setResults(EMPTY))
         .finally(() => current && setLoading(false));
     }, 250);
@@ -55,7 +79,7 @@ export function GlobalSearch() {
       current = false;
       clearTimeout(t);
     };
-  }, [q]);
+  }, [q, router]);
 
   function go(href: string) {
     setOpen(false);
@@ -159,4 +183,15 @@ export function GlobalSearch() {
       </CommandDialog>
     </>
   );
+}
+
+/** The page for the one result whose code is exactly the scanned code, if there is exactly one. */
+function exactMatch(r: Results, code: string): string | null {
+  const same = (v?: string | null) => !!v && v.toLowerCase() === code.toLowerCase();
+  const hits = [
+    ...r.devices.filter((d) => same(d.serial_imei)).map((d) => `/clients/${d.client_id}`),
+    ...r.repairs.filter((x) => same(x.ticket_code)).map((x) => `/repairs/${x.id}`),
+    ...r.items.filter((i) => same(i.sku)).map((i) => `/inventory?find=${encodeURIComponent(i.sku)}`),
+  ];
+  return new Set(hits).size === 1 ? hits[0] : null;
 }

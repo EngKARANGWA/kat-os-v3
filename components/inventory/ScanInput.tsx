@@ -1,9 +1,10 @@
 "use client";
 
 import { forwardRef, useImperativeHandle, useRef, useState } from "react";
-import { Plus, ScanLine } from "lucide-react";
+import { Camera, Plus, ScanBarcode } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useScannerBurst } from "@/lib/scanner";
 
 export type ScanInputHandle = {
   focus: () => void;
@@ -21,13 +22,6 @@ type Props = {
   onPendingChange?: (pending: boolean) => void;
 };
 
-// A USB scanner "types" a whole code a few milliseconds per character (with the odd hiccup);
-// people average 80 ms or more per key. So: fast on average, and no long pause in between.
-const SCANNER_MAX_AVG_MS = 30;
-const SCANNER_MAX_GAP_MS = 100;
-const SCANNER_MIN_LENGTH = 4;
-const SCANNER_IDLE_MS = 150;
-
 /**
  * The scan box used by Check In / Check Out. Adds a code when:
  *  - Enter is pressed (what most USB scanners send after the code), or the Add button is clicked, or
@@ -37,7 +31,7 @@ const SCANNER_IDLE_MS = 150;
 export const ScanInput = forwardRef<ScanInputHandle, Props>(function ScanInput({ onCode, onCamera, disabled, placeholder, onPendingChange }, ref) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
-  const burst = useRef({ first: 0, last: 0, slowGap: false, timer: undefined as ReturnType<typeof setTimeout> | undefined });
+  const [focused, setFocused] = useState(false);
 
   const setText = (v: string) => {
     setValue(v);
@@ -45,7 +39,7 @@ export const ScanInput = forwardRef<ScanInputHandle, Props>(function ScanInput({
   };
 
   async function commit() {
-    clearTimeout(burst.current.timer);
+    burst.cancel();
     const code = (inputRef.current?.value ?? value).trim();
     setText("");
     inputRef.current?.focus();
@@ -54,20 +48,10 @@ export const ScanInput = forwardRef<ScanInputHandle, Props>(function ScanInput({
 
   useImperativeHandle(ref, () => ({ focus: () => inputRef.current?.focus(), commit }));
 
+  const burst = useScannerBurst(() => commit()); // scanner without Enter
   function onChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const now = performance.now();
-    const b = burst.current;
-    const v = e.target.value;
-    // Measure the typing speed of this code (from its first character).
-    if (v.length <= 1) {
-      b.first = now;
-      b.slowGap = false;
-    } else if (now - b.last > SCANNER_MAX_GAP_MS) b.slowGap = true;
-    b.last = now;
-    setText(v);
-    clearTimeout(b.timer);
-    const avg = v.length > 1 ? (now - b.first) / (v.length - 1) : Infinity;
-    if (!b.slowGap && avg <= SCANNER_MAX_AVG_MS && v.trim().length >= SCANNER_MIN_LENGTH) b.timer = setTimeout(commit, SCANNER_IDLE_MS); // scanner without Enter
+    setText(e.target.value);
+    burst.onInput(e.target.value);
   }
 
   return (
@@ -78,24 +62,34 @@ export const ScanInput = forwardRef<ScanInputHandle, Props>(function ScanInput({
         commit();
       }}
     >
-      <Input
-        ref={inputRef}
-        aria-label="Scan code"
-        value={value}
-        onChange={onChange}
-        disabled={disabled}
-        autoFocus
-        autoComplete="off"
-        placeholder={placeholder}
-        className="h-11 font-mono"
-      />
+      <div className="relative flex-1">
+        <ScanBarcode className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          ref={inputRef}
+          aria-label="Scan code"
+          value={value}
+          onChange={onChange}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          disabled={disabled}
+          autoFocus
+          autoComplete="off"
+          placeholder={placeholder}
+          className="h-11 pr-28 pl-9 font-mono"
+        />
+        {focused && !disabled && (
+          <span className="pointer-events-none absolute top-1/2 right-2 inline-flex -translate-y-1/2 items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+            <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
+            Scanner ready
+          </span>
+        )}
+      </div>
       <Button type="submit" className="h-11" disabled={disabled || !value.trim()} aria-label="Add code">
         <Plus />
         Add
       </Button>
-      <Button type="button" variant="outline" className="h-11" disabled={disabled} onClick={onCamera}>
-        <ScanLine />
-        Camera
+      <Button type="button" variant="ghost" size="icon" className="size-11 text-muted-foreground" disabled={disabled} onClick={onCamera} aria-label="Camera" title="No scanner? Use the camera">
+        <Camera />
       </Button>
     </form>
   );
